@@ -26,7 +26,12 @@ module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX
     parameter nY = (RESOLUTION == "640x480") ? 9 : ((RESOLUTION == "320x240") ? 8 : 7);
 
     // state names for the FSM that controls drawing of objects
-    parameter A = 2'b00, B = 2'b01, C = 2'b10, D = 2'b11;
+    // parameter A = 2'b00, B = 2'b01, C = 2'b10, D = 2'b11;
+    parameter Q = 5'b00000, W = 5'b00001, E = 5'b00010, R = 5'b00011, T = 5'b00100, Y = 5'b00101, 
+              U = 5'b00110, I = 5'b00111, O = 5'b01000, A = 5'b01001, S = 5'b01010, D = 5'b01011, 
+              F = 5'b01100, G = 5'b01101, H = 5'b01110, J = 5'b01111, K = 5'b10000, L = 5'b10001, 
+              Z = 5'b10010, X = 5'b10011, C = 5'b10100, V = 5'b10101, B = 5'b10111, N = 5'b11000, 
+              M = 5'b11001, Comma = 5'b11010, Period = 5'b11011;
 
 	input wire CLOCK_50;	
 	input wire [9:0] SW;
@@ -40,18 +45,18 @@ module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX
 	output wire [23:0] VGA_COLOR;    // for DESim VGA
 	output wire plot;                // for DESim VGA
 	
-    wire VGA_SYNC;      // used to indicate when background drawing is done
+    // wire VGA_SYNC;      // used to indicate when background drawing is done
 	
     // The signals below are used to multiplex the pixels displayed for objects 1 and 2
-	wire [nX-1:0] O1_x, O2_x, MUX_x;    // x coordinate multiplexer
-	wire [nY-1:0] O1_y, O2_y, MUX_y;    // y coordinate multiplexer
-	wire [COLOR_DEPTH-1:0] O1_color, O2_color, MUX_color; // color multiplexer
-	wire O1_write, O2_write, MUX_write; // write control multiplexer
+	// wire [nX-1:0] O1_x, O2_x, MUX_x;    // x coordinate multiplexer
+	// wire [nY-1:0] O1_y, O2_y, MUX_y;    // y coordinate multiplexer
+	// wire [COLOR_DEPTH-1:0] O1_color, O2_color, MUX_color; // color multiplexer
+	// wire O1_write, O2_write, MUX_write; // write control multiplexer
 
     reg prev_ps2_clk;               // ps2_clk value in the previous clock cycle
     wire negedge_ps2_clk;           // used for PS2 keyboard signals
     wire ps2_rec;                   // set when a PS2 packet has been received
-    wire object_sel;                // used to select which object to erase/draw
+    // wire object_sel;                // used to select which object to erase/draw
     reg [32:0] Serial;              // each PS2 serial data packet has 11 bits:
                                     // STOP (1) PARITY d7 d6 d5 d4 d3 d2 d1 d0 START (0)
                                     // 33 total bits are received (scancode/release/scancode
@@ -59,10 +64,10 @@ module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX
     wire [7:0] scancode;            // used to save the current ps2 scancode
     reg Esc;                        // enable scancode register
     reg step;                       // move an object
-    wire O1_done, O2_done, done;    // object move completed
-    reg O1_O2;                      // draw object 1 when cleared, object 2 when set
-    wire [1:0] O1_dir, O2_dir;      // used to set direction of moving for objects
-    reg [1:0] y_Q, Y_D;             // FSM, used to control drawing of objects
+    // wire O1_done, O2_done, done;    // object move completed
+    // reg O1_O2;                      // draw object 1 when cleared, object 2 when set
+    // wire [1:0] O1_dir, O2_dir;      // used to set direction of moving for objects
+    // reg [1:0] y_Q, Y_D;             // FSM, used to control drawing of objects
 
     wire Resetn, KEY1, KEY2;        // Reset, and synchronized versions of KEYs
     wire PS2_CLK_S, PS2_DAT_S;      // synchronized versions of PS2 signals
@@ -108,87 +113,92 @@ module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX
 
     // select object according to which PS2 key was pressed. 
     // scancode[4] == 1 for a/s/w/z and 0 for d/f/r/c
-    assign object_sel = scancode[4];
+    // assign object_sel = scancode[4];
     // register whether to move object 1 or object 2
-    always @(posedge CLOCK_50)
-        if (!Resetn | KEY1)
-            O1_O2 <= 1'b0;  // select object 1
-        else if (KEY2)
-            O1_O2 <= 1'b1;  // select object 2
-        else if (step)
-            O1_O2 <= !object_sel;
+    // always @(posedge CLOCK_50)
+    //     if (!Resetn | KEY1)
+    //         O1_O2 <= 1'b0;  // select object 1
+    //     else if (KEY2)
+    //         O1_O2 <= 1'b1;  // select object 2
+    //     else if (step)
+    //         O1_O2 <= !object_sel;
 
-    assign O1_dir = scancode[1:0]; // ps2 key identifier (for a, s, w, z)
-    assign O2_dir = {scancode[3],scancode[1]}; // ps2 key identifier (for d, f, r, c)
-    // FSM state table
-    always @ (*)
-        case (y_Q)
-            A:  if (!ps2_rec) Y_D = A;
-                else Y_D = B;
-            B:  Y_D = C;        // enable scancode register
-            C:  Y_D = D;        // send step signal to object
-            D:  if (done == 1'b0) Y_D = D;
-                else Y_D = A;
-            default: Y_D = A;
-        endcase
-    // FSM outputs
-    always @ (*)
-    begin
-        // default assignments
-        Esc = 1'b0; step = 1'b0;
-        case (y_Q)
-            A:  ;
-            B:  Esc = 1'b1;
-            C:  step = 1'b1;  
-            D:  ;
-        endcase
-    end
 
-    // FSM state FFs
-    always @(posedge CLOCK_50)
-        if (!Resetn)
-            y_Q <= A;
-        else
-            y_Q <= Y_D;
+    // ********* CHANGE BELOW FOR OMNICHORD. ************ //
+
+    // assign O1_dir = scancode[1:0]; // ps2 key identifier (for a, s, w, z)
+    // assign O2_dir = {scancode[3],scancode[1]}; // ps2 key identifier (for d, f, r, c)
+    // // FSM state table
+    // always @ (*)
+    //     case (y_Q)
+    //         A:  if (!ps2_rec) Y_D = A;
+    //             else Y_D = B;
+    //         B:  Y_D = C;        // enable scancode register
+    //         C:  Y_D = D;        // send step signal to object
+    //         D:  if (done == 1'b0) Y_D = D;
+    //             else Y_D = A;
+    //         default: Y_D = A;
+    //     endcase
+    // // FSM outputs
+    // always @ (*)
+    // begin
+    //     // default assignments
+    //     Esc = 1'b0; step = 1'b0;
+    //     case (y_Q)
+    //         A:  ;
+    //         B:  Esc = 1'b1;
+    //         C:  step = 1'b1;  
+    //         D:  ;
+    //     endcase
+    // end
+
+    // // FSM state FFs
+    // always @(posedge CLOCK_50)
+    //     if (!Resetn)
+    //         y_Q <= A;
+    //     else
+    //         y_Q <= Y_D;
+    
+    // ******** CHANGE ABOVE FOR OMNICHORD. ************ //
 
     // instantiate object 1
-    object O1 (Resetn, CLOCK_50, KEY1, object_sel & step, O1_dir, O1_x, O1_y, 
-               O1_color, O1_write, O1_done);
-        defparam O1.RESOLUTION = RESOLUTION;
-        defparam O1.LEFT  = 2'b00;  // 'a'
-        defparam O1.RIGHT = 2'b11;  // 's'
-        defparam O1.UP    = 2'b01;  // 'w'
-        defparam O1.DOWN =  2'b10;  // 'z'
-        defparam O1.nX = nX;
-        defparam O1.nY = nY;
-        defparam O1.COLOR_DEPTH = COLOR_DEPTH;
+    // object O1 (Resetn, CLOCK_50, KEY1, object_sel & step, O1_dir, O1_x, O1_y, 
+    //            O1_color, O1_write, O1_done);
+    //     defparam O1.RESOLUTION = RESOLUTION;
+    //     defparam O1.LEFT  = 2'b00;  // 'a'
+    //     defparam O1.RIGHT = 2'b11;  // 's'
+    //     defparam O1.UP    = 2'b01;  // 'w'
+    //     defparam O1.DOWN =  2'b10;  // 'z'
+    //     defparam O1.nX = nX;
+    //     defparam O1.nY = nY;
+    //     defparam O1.COLOR_DEPTH = COLOR_DEPTH;
 
     // instantiate object 2
-    object O2 (Resetn, CLOCK_50, KEY2, !object_sel & step, O2_dir, O2_x, O2_y,
-               O2_color, O2_write, O2_done);
-        defparam O2.RESOLUTION = RESOLUTION;
-        defparam O2.nX = nX;
-        defparam O2.nY = nY;
-        defparam O2.COLOR_DEPTH = COLOR_DEPTH;
-        defparam O2.XOFFSET = (RESOLUTION == "640x480") ? 160 : 
-                                ((RESOLUTION == "320x240") ? 80 : 40);
-        defparam O2.YOFFSET = (RESOLUTION == "640x480") ? 150 : 
-                                ((RESOLUTION == "320x240") ? 75 : 37);
-        defparam O2.LEFT  = 2'b01;  // 'd'
-        defparam O2.RIGHT = 2'b11;  // 'f'
-        defparam O2.UP    = 2'b10;  // 'r'
-        defparam O2.DOWN =  2'b00;  // 'c'
-        defparam O2.INIT_FILE = 
-            (COLOR_DEPTH == 9) ? "./MIF/circle_16_16_9.mif" : 
-                ((COLOR_DEPTH == 6) ?  "./MIF/circle_16_16_6.mif" : "./MIF/circle_16_16_3.mif");
+    // object O2 (Resetn, CLOCK_50, KEY2, !object_sel & step, O2_dir, O2_x, O2_y,
+    //            O2_color, O2_write, O2_done);
+    //     defparam O2.RESOLUTION = RESOLUTION;
+    //     defparam O2.nX = nX;
+    //     defparam O2.nY = nY;
+    //     defparam O2.COLOR_DEPTH = COLOR_DEPTH;
+    //     defparam O2.XOFFSET = (RESOLUTION == "640x480") ? 160 : 
+    //                             ((RESOLUTION == "320x240") ? 80 : 40);
+    //     defparam O2.YOFFSET = (RESOLUTION == "640x480") ? 150 : 
+    //                             ((RESOLUTION == "320x240") ? 75 : 37);
+    //     defparam O2.LEFT  = 2'b01;  // 'd'
+    //     defparam O2.RIGHT = 2'b11;  // 'f'
+    //     defparam O2.UP    = 2'b10;  // 'r'
+    //     defparam O2.DOWN =  2'b00;  // 'c'
+    //     defparam O2.INIT_FILE = 
+    //         (COLOR_DEPTH == 9) ? "./MIF/circle_16_16_9.mif" : 
+    //             ((COLOR_DEPTH == 6) ?  "./MIF/circle_16_16_6.mif" : "./MIF/circle_16_16_3.mif");
 
-    assign done = O1_done | O2_done;
+    // assign done = O1_done | O2_done;
 
     // choose x, y, color, and write for one of the two objects
-    assign MUX_x = !O1_O2 ? O1_x : O2_x;
-    assign MUX_y = !O1_O2 ? O1_y : O2_y;
-    assign MUX_color = !O1_O2 ? O1_color : O2_color;
-    assign MUX_write = !O1_O2 ? O1_write : O2_write;
+    // assign MUX_x = !O1_O2 ? O1_x : O2_x;
+    // assign MUX_y = !O1_O2 ? O1_y : O2_y;
+    // assign MUX_color = !O1_O2 ? O1_color : O2_color;
+    // assign MUX_write = !O1_O2 ? O1_write : O2_write;
 
     // display PS2 data
     hex7seg H0 (Serial[4:1], HEX0);
@@ -201,37 +211,37 @@ module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX
     // instantiate the DESim VGA adapter. It first draws the background image that is stored
     // in the video memory (the video memory is optional), and then draws pixels for the
     // selected object whenever MUX_write is asserted.
-    `define VGA_MEMORY
-    vga_adapter VGA (
-        .resetn(Resetn),
-        .clock(CLOCK_50),
-        .color(MUX_color),      // used to draw pixels on top of background
-        .x(MUX_x),              // used to draw pixels on top of background
-        .y(MUX_y),              // used to draw pixels on top of background
-        .write(MUX_write),      // used to draw pixels on top of background
-        .VGA_X(VGA_X),          // the output VGA x coordinate (column)
-        .VGA_Y(VGA_Y),          // the output VGA y coordinate (row)
-        .VGA_COLOR(VGA_COLOR),  // the output VGA color
-        .VGA_SYNC(VGA_SYNC),    // indicates when background MIF has been drawn
-        .plot(plot));           // the output VGA plot signal
-		defparam VGA.RESOLUTION = RESOLUTION;
-        // choose background image according to resolution and color depth
-		defparam VGA.BACKGROUND_IMAGE = 
-            (RESOLUTION == "640x480") ?
-                ((COLOR_DEPTH == 9) ? "./MIF/rainbow_640_9.mif" :
-                ((COLOR_DEPTH == 6) ? "./MIF/rainbow_640_6.mif" :
-                "./MIF/rainbow_640_3.mif")) : 
-            ((RESOLUTION == "320x240") ?
-                ((COLOR_DEPTH == 9) ? "./MIF/rainbow_320_9.mif" :
-                ((COLOR_DEPTH == 6) ? "./MIF/rainbow_320_6.mif" :
-                "./MIF/rainbow_320_3.mif")) : 
-                    // 160x120
-                    ((COLOR_DEPTH == 9) ? "./MIF/rainbow_160_9.mif" :
-                    ((COLOR_DEPTH == 6) ? "./MIF/rainbow_160_6.mif" :
-                    "./MIF/rainbow_160_3.mif")));
-		defparam VGA.COLOR_DEPTH = COLOR_DEPTH;
+    // `define VGA_MEMORY
+    // vga_adapter VGA (
+    //     .resetn(Resetn),
+    //     .clock(CLOCK_50),
+    //     .color(MUX_color),      // used to draw pixels on top of background
+    //     .x(MUX_x),              // used to draw pixels on top of background
+    //     .y(MUX_y),              // used to draw pixels on top of background
+    //     .write(MUX_write),      // used to draw pixels on top of background
+    //     .VGA_X(VGA_X),          // the output VGA x coordinate (column)
+    //     .VGA_Y(VGA_Y),          // the output VGA y coordinate (row)
+    //     .VGA_COLOR(VGA_COLOR),  // the output VGA color
+    //     .VGA_SYNC(VGA_SYNC),    // indicates when background MIF has been drawn
+    //     .plot(plot));           // the output VGA plot signal
+	// 	defparam VGA.RESOLUTION = RESOLUTION;
+    //     // choose background image according to resolution and color depth
+	// 	defparam VGA.BACKGROUND_IMAGE = 
+    //         (RESOLUTION == "640x480") ?
+    //             ((COLOR_DEPTH == 9) ? "./MIF/rainbow_640_9.mif" :
+    //             ((COLOR_DEPTH == 6) ? "./MIF/rainbow_640_6.mif" :
+    //             "./MIF/rainbow_640_3.mif")) : 
+    //         ((RESOLUTION == "320x240") ?
+    //             ((COLOR_DEPTH == 9) ? "./MIF/rainbow_320_9.mif" :
+    //             ((COLOR_DEPTH == 6) ? "./MIF/rainbow_320_6.mif" :
+    //             "./MIF/rainbow_320_3.mif")) : 
+    //                 // 160x120
+    //                 ((COLOR_DEPTH == 9) ? "./MIF/rainbow_160_9.mif" :
+    //                 ((COLOR_DEPTH == 6) ? "./MIF/rainbow_160_6.mif" :
+    //                 "./MIF/rainbow_160_3.mif")));
+	// 	defparam VGA.COLOR_DEPTH = COLOR_DEPTH;
 
-    assign LEDR = {VGA_SYNC,1'b0,scancode}; // turn on LED 9 when background is done, show scancode
+    // assign LEDR = {VGA_SYNC,1'b0,scancode}; // turn on LED 9 when background is done, show scancode
 
 endmodule
 
@@ -326,148 +336,148 @@ module hex7seg (hex, display);
 endmodule
 
 // implements a movable object
-module object (Resetn, Clock, go, ps2_rec, dir, VGA_x, VGA_y, VGA_color, VGA_write, done);
-    parameter RESOLUTION = "160x120"; // "640x480" "320x240" "160x120"
-    // specify the number of bits needed for an X (column) pixel coordinate on the VGA display
-    parameter nX = (RESOLUTION == "640x480") ? 10 : ((RESOLUTION == "320x240") ? 9 : 8);
-    // specify the number of bits needed for a Y (row) pixel coordinate on the VGA display
-    parameter nY = (RESOLUTION == "640x480") ? 9 : ((RESOLUTION == "320x240") ? 8 : 7);
-    parameter COLOR_DEPTH = 3;
-    // by default, use offsets to center the object on the VGA display
-    parameter XOFFSET = (RESOLUTION == "640x480") ? 320 : 
-                                ((RESOLUTION == "320x240") ? 160 : 80);
-    parameter YOFFSET = (RESOLUTION == "640x480") ? 240 : 
-                                ((RESOLUTION == "320x240") ? 120 : 60);
-    parameter LEFT = 2'b00 /*'a'*/, RIGHT = 2'b11/*'s'*/, UP = 2'b01/*'w'*/, DOWN = 2'b10/*'z'*/;
-    parameter xOBJ = 4, yOBJ = 4;   // object size is 2^xOBJ x 2^yOBJ
-    parameter BOX_SIZE_X = 1 << xOBJ;
-    parameter BOX_SIZE_Y = 1 << yOBJ;
-    parameter Mn = xOBJ + yOBJ; // address lines needed for the object memory
-    parameter INIT_FILE = 
-            (COLOR_DEPTH == 9) ? "./MIF/object_mem_16_16_9.mif" : 
-                ((COLOR_DEPTH == 6) ?  "./MIF/object_mem_16_16_6.mif" : 
-                "./MIF/object_mem_16_16_3.mif");
+// module object (Resetn, Clock, go, ps2_rec, dir, VGA_x, VGA_y, VGA_color, VGA_write, done);
+//     parameter RESOLUTION = "160x120"; // "640x480" "320x240" "160x120"
+//     // specify the number of bits needed for an X (column) pixel coordinate on the VGA display
+//     parameter nX = (RESOLUTION == "640x480") ? 10 : ((RESOLUTION == "320x240") ? 9 : 8);
+//     // specify the number of bits needed for a Y (row) pixel coordinate on the VGA display
+//     parameter nY = (RESOLUTION == "640x480") ? 9 : ((RESOLUTION == "320x240") ? 8 : 7);
+//     parameter COLOR_DEPTH = 3;
+//     // by default, use offsets to center the object on the VGA display
+//     parameter XOFFSET = (RESOLUTION == "640x480") ? 320 : 
+//                                 ((RESOLUTION == "320x240") ? 160 : 80);
+//     parameter YOFFSET = (RESOLUTION == "640x480") ? 240 : 
+//                                 ((RESOLUTION == "320x240") ? 120 : 60);
+//     parameter LEFT = 2'b00 /*'a'*/, RIGHT = 2'b11/*'s'*/, UP = 2'b01/*'w'*/, DOWN = 2'b10/*'z'*/;
+//     parameter xOBJ = 4, yOBJ = 4;   // object size is 2^xOBJ x 2^yOBJ
+//     parameter BOX_SIZE_X = 1 << xOBJ;
+//     parameter BOX_SIZE_Y = 1 << yOBJ;
+//     parameter Mn = xOBJ + yOBJ; // address lines needed for the object memory
+//     parameter INIT_FILE = 
+//             (COLOR_DEPTH == 9) ? "./MIF/object_mem_16_16_9.mif" : 
+//                 ((COLOR_DEPTH == 6) ?  "./MIF/object_mem_16_16_6.mif" : 
+//                 "./MIF/object_mem_16_16_3.mif");
 
-    // state names for the FSM that draws the object
-    parameter A = 3'b000, B = 3'b001, C = 3'b010, D = 3'b011, E = 3'b100,
-              F = 3'b101, G = 3'b110, H = 3'b111;
+//     // state names for the FSM that draws the object
+//     parameter A = 3'b000, B = 3'b001, C = 3'b010, D = 3'b011, E = 3'b100,
+//               F = 3'b101, G = 3'b110, H = 3'b111;
     
-    input wire Resetn, Clock;
-    input wire go;                              // can be used to draw at initial position
-    input wire ps2_rec;                         // PS2 data received
-    input wire [1:0] dir;                       // movement direction
-	output wire [nX-1:0] VGA_x;                 // for syncing with object memory
-	output wire [nY-1:0] VGA_y;                 // for syncing with object memory
-	output wire [COLOR_DEPTH-1:0] VGA_color;    // used to draw pixels
-    output wire VGA_write;                      // pixel write control
-    output reg done;                            // done drawing cycle
+//     input wire Resetn, Clock;
+//     input wire go;                              // can be used to draw at initial position
+//     input wire ps2_rec;                         // PS2 data received
+//     input wire [1:0] dir;                       // movement direction
+// 	output wire [nX-1:0] VGA_x;                 // for syncing with object memory
+// 	output wire [nY-1:0] VGA_y;                 // for syncing with object memory
+// 	output wire [COLOR_DEPTH-1:0] VGA_color;    // used to draw pixels
+//     output wire VGA_write;                      // pixel write control
+//     output reg done;                            // done drawing cycle
 
-	wire [nX-1:0] X, X0;    // starting X location 
-	wire [nY-1:0] Y, Y0;    // starting Y location 
-	wire [nX-1:0] size_x = BOX_SIZE_X;   // store the X size (must be power of 2)
-	wire [nY-1:0] size_y = BOX_SIZE_Y;   // store the Y size
-    wire [xOBJ-1:0] XC;                  // used to access object memory
-    wire [yOBJ-1:0] YC;                  // used to access object memory
-    reg write, Lxc, Lyc, Exc, Eyc;       // object control signals
-    reg erase;                           // erase/draw object
-    wire Right, Left, Up, Down;          // object direction
-    reg Lx, Ly, Ex, Ey;                  // object counter controls
-    reg [2:0] y_Q, Y_D;                  // FSM
+// 	wire [nX-1:0] X, X0;    // starting X location 
+// 	wire [nY-1:0] Y, Y0;    // starting Y location 
+// 	wire [nX-1:0] size_x = BOX_SIZE_X;   // store the X size (must be power of 2)
+// 	wire [nY-1:0] size_y = BOX_SIZE_Y;   // store the Y size
+//     wire [xOBJ-1:0] XC;                  // used to access object memory
+//     wire [yOBJ-1:0] YC;                  // used to access object memory
+//     reg write, Lxc, Lyc, Exc, Eyc;       // object control signals
+//     reg erase;                           // erase/draw object
+//     wire Right, Left, Up, Down;          // object direction
+//     reg Lx, Ly, Ex, Ey;                  // object counter controls
+//     reg [2:0] y_Q, Y_D;                  // FSM
     
-	wire [COLOR_DEPTH-1:0] obj_color;    // object pixel colors, read from memory
+// 	wire [COLOR_DEPTH-1:0] obj_color;    // object pixel colors, read from memory
 	
-    // object (x,y) location. For x, counter will be enabled when moving L/R, increment
-    // for R, decrement for L. For y, counter will be enabled when moving U/D, increment 
-    // for D, decrement for U
-    assign X0 = XOFFSET;
-    assign Y0 = YOFFSET;
-    upDn_count UX (X0, Clock, Resetn, Lx, Ex, Right, X);
-        defparam UX.n = nX;
-    upDn_count UY (Y0, Clock, Resetn, Ly, Ey, Down, Y);
-        defparam UY.n = nY;
+//     // object (x,y) location. For x, counter will be enabled when moving L/R, increment
+//     // for R, decrement for L. For y, counter will be enabled when moving U/D, increment 
+//     // for D, decrement for U
+//     assign X0 = XOFFSET;
+//     assign Y0 = YOFFSET;
+//     upDn_count UX (X0, Clock, Resetn, Lx, Ex, Right, X);
+//         defparam UX.n = nX;
+//     upDn_count UY (Y0, Clock, Resetn, Ly, Ey, Down, Y);
+//         defparam UY.n = nY;
 
-    // these counter are used to generate (x,y) coordinates to read the object's pixels
-    upDn_count U3 ({xOBJ{1'd0}}, Clock, Resetn, Lxc, Exc, 1'b1, XC); // object column counter
-        defparam U3.n = xOBJ;
-    upDn_count U4 ({yOBJ{1'd0}}, Clock, Resetn, Lyc, Eyc, 1'b1, YC); // object row counter
-        defparam U4.n = yOBJ;
+//     // these counter are used to generate (x,y) coordinates to read the object's pixels
+//     upDn_count U3 ({xOBJ{1'd0}}, Clock, Resetn, Lxc, Exc, 1'b1, XC); // object column counter
+//         defparam U3.n = xOBJ;
+//     upDn_count U4 ({yOBJ{1'd0}}, Clock, Resetn, Lyc, Eyc, 1'b1, YC); // object row counter
+//         defparam U4.n = yOBJ;
 
-    // these signals are used to enable the (x,y) object location counters and to make these 
-    // counters increment or decrement
-    assign Left = (dir == LEFT);
-    assign Right = (dir == RIGHT);
-    assign Up = (dir == UP);
-    assign Down = (dir == DOWN);
+//     // these signals are used to enable the (x,y) object location counters and to make these 
+//     // counters increment or decrement
+//     assign Left = (dir == LEFT);
+//     assign Right = (dir == RIGHT);
+//     assign Up = (dir == UP);
+//     assign Down = (dir == DOWN);
 
-    // FSM state table
-    always @ (*)
-        case (y_Q)
-            A:  Y_D = B;                        // load (x,y) location counters
-            B:  if (go) Y_D = F;                // pushbutton KEY pressed to show object
-                else if (ps2_rec) Y_D = C;      // PS2 key received to move object
-                else Y_D = B;                   // wait
-            C:  if (XC != size_x-1) Y_D = C;    // erase row of object
-                else Y_D = D;
-            D:  if (YC != size_y-1) Y_D = C;    // next row of object to erase
-                else Y_D = E;                   // done erase cycle
-            E:  Y_D = F;                        // +/- (x,y)
-            F:  if (XC != size_x-1) Y_D = F;    // draw row of object
-                else Y_D = G;
-            G:  if (YC != size_y-1) Y_D = F;    // next row of object to draw
-                else Y_D = H;                   // done draw cycle
-            H:  if (go) Y_D = H;                // wait for KEY press
-                else Y_D = B;
-            default: Y_D = A;
-        endcase
-    // FSM outputs
-    always @ (*)
-    begin
-        // default assignments
-        Lx = 1'b0; Ly = 1'b0; Ex = 1'b0; Ey = 1'b0; write = 1'b0; 
-        Lxc = 1'b0; Lyc = 1'b0; Exc = 1'b0; Eyc = 1'b0; erase = 1'b0; done = 1'b0;
-        case (y_Q)
-            A:  begin Lx = 1'b1; Ly = 1'b1; end                   // load (X,Y) counters
-            B:  begin Lxc = 1'b1; Lyc = 1'b1; end                 // load (XC,YC) counters
-            C:  begin Exc = 1'b1; write = 1'b1; erase = 1'b1; end // enable XC, write pixel
-            D:  begin Lxc = 1'b1; Eyc = 1'b1; erase = 1'b1; end   // load XC, enable YC
-            // state E is reached after erasing the object. Now, move and draw the object
-            E:  begin Ex = Right | Left; Ey = Up | Down; end      // move L/R or U/D
-            F:  begin Exc = 1'b1; write = 1'b1; end               // enable XC, write pixel
-            G:  begin Lxc = 1'b1; Eyc = 1'b1; end                 // load XC, enable YC
-            H:  done = 1'b1;
-        endcase
-    end
+//     // FSM state table
+//     always @ (*)
+//         case (y_Q)
+//             A:  Y_D = B;                        // load (x,y) location counters
+//             B:  if (go) Y_D = F;                // pushbutton KEY pressed to show object
+//                 else if (ps2_rec) Y_D = C;      // PS2 key received to move object
+//                 else Y_D = B;                   // wait
+//             C:  if (XC != size_x-1) Y_D = C;    // erase row of object
+//                 else Y_D = D;
+//             D:  if (YC != size_y-1) Y_D = C;    // next row of object to erase
+//                 else Y_D = E;                   // done erase cycle
+//             E:  Y_D = F;                        // +/- (x,y)
+//             F:  if (XC != size_x-1) Y_D = F;    // draw row of object
+//                 else Y_D = G;
+//             G:  if (YC != size_y-1) Y_D = F;    // next row of object to draw
+//                 else Y_D = H;                   // done draw cycle
+//             H:  if (go) Y_D = H;                // wait for KEY press
+//                 else Y_D = B;
+//             default: Y_D = A;
+//         endcase
+//     // FSM outputs
+//     always @ (*)
+//     begin
+//         // default assignments
+//         Lx = 1'b0; Ly = 1'b0; Ex = 1'b0; Ey = 1'b0; write = 1'b0; 
+//         Lxc = 1'b0; Lyc = 1'b0; Exc = 1'b0; Eyc = 1'b0; erase = 1'b0; done = 1'b0;
+//         case (y_Q)
+//             A:  begin Lx = 1'b1; Ly = 1'b1; end                   // load (X,Y) counters
+//             B:  begin Lxc = 1'b1; Lyc = 1'b1; end                 // load (XC,YC) counters
+//             C:  begin Exc = 1'b1; write = 1'b1; erase = 1'b1; end // enable XC, write pixel
+//             D:  begin Lxc = 1'b1; Eyc = 1'b1; erase = 1'b1; end   // load XC, enable YC
+//             // state E is reached after erasing the object. Now, move and draw the object
+//             E:  begin Ex = Right | Left; Ey = Up | Down; end      // move L/R or U/D
+//             F:  begin Exc = 1'b1; write = 1'b1; end               // enable XC, write pixel
+//             G:  begin Lxc = 1'b1; Eyc = 1'b1; end                 // load XC, enable YC
+//             H:  done = 1'b1;
+//         endcase
+//     end
 
-    // FSM state FFs
-    always @(posedge Clock)
-        if (!Resetn)
-            y_Q <= 3'b0;
-        else
-            y_Q <= Y_D;
+//     // FSM state FFs
+//     always @(posedge Clock)
+//         if (!Resetn)
+//             y_Q <= 3'b0;
+//         else
+//             y_Q <= Y_D;
 
-    // read a pixel color from the object memory. We can use {YC,XC} because the x dimension
-    // of the object memory is a power of 2
-    object_mem U6 ({YC,XC}, Clock, obj_color);
-        defparam U6.n = COLOR_DEPTH;
-        defparam U6.Mn = xOBJ + yOBJ;
-        defparam U6.INIT_FILE = INIT_FILE;
+//     // read a pixel color from the object memory. We can use {YC,XC} because the x dimension
+//     // of the object memory is a power of 2
+//     object_mem U6 ({YC,XC}, Clock, obj_color);
+//         defparam U6.n = COLOR_DEPTH;
+//         defparam U6.Mn = xOBJ + yOBJ;
+//         defparam U6.INIT_FILE = INIT_FILE;
 
-    // compute the (x,y) location of the current pixel to be drawn (or erased). We subtract
-    // half the object's width and height because we want the objec to be centered at its 
-    // original (x,y) location. We add (Xc,YC) to form the correct address of the pixel. The
-    // object memory takes one clock cycle to provide data, so we register the computed (x,y)
-    // location to remain synchronized
-    regn U7 (X - (size_x >> 1) + XC, Resetn, 1'b1, Clock, VGA_x);
-        defparam U7.n = nX;
-    regn U8 (Y - (size_y >> 1) + YC, Resetn, 1'b1, Clock, VGA_y);
-        defparam U8.n = nY;
+//     // compute the (x,y) location of the current pixel to be drawn (or erased). We subtract
+//     // half the object's width and height because we want the objec to be centered at its 
+//     // original (x,y) location. We add (Xc,YC) to form the correct address of the pixel. The
+//     // object memory takes one clock cycle to provide data, so we register the computed (x,y)
+//     // location to remain synchronized
+//     regn U7 (X - (size_x >> 1) + XC, Resetn, 1'b1, Clock, VGA_x);
+//         defparam U7.n = nX;
+//     regn U8 (Y - (size_y >> 1) + YC, Resetn, 1'b1, Clock, VGA_y);
+//         defparam U8.n = nY;
 
-    // synchronize write signal with VGA_x, VGA_y, VGA_color 
-    regn U9 (write, Resetn, 1'b1, Clock, VGA_write);
-        defparam U9.n = 1;
+//     // synchronize write signal with VGA_x, VGA_y, VGA_color 
+//     regn U9 (write, Resetn, 1'b1, Clock, VGA_write);
+//         defparam U9.n = 1;
 
-    // use the background color (when erasing), or the object color when drawing
-    // (black background is assumed below)
-    assign VGA_color = erase ? {COLOR_DEPTH{1'b0}} : obj_color;
+//     // use the background color (when erasing), or the object color when drawing
+//     // (black background is assumed below)
+//     assign VGA_color = erase ? {COLOR_DEPTH{1'b0}} : obj_color;
 
-endmodule
+// endmodule
