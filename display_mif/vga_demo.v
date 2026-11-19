@@ -1,0 +1,859 @@
+`default_nettype none
+
+/*  This code first displays a background image (MIF) on the DESim VGA window. Then, the code
+ *  displays two objects, each of which is read from a small memory, on the window. Each
+ *  object can be moved left/right/up/down by pressing keyboard keys in the DESim PS2/Keyboard
+ *  window. To use the demo, first use KEY[0] to perform a reset. The background MIF should 
+ *  appear on the VGA output. Pressing KEY[1] displays one object, at its initial position, 
+ *  and pressing KEY[2] displays the other object. Move the first object left/right/up/down 
+ *  using PS2 keys a/s/w/z, and the other object using d/f/r/c.
+ *
+ *  Note that the VGA background image is optional. The video memory that provides this image
+ *  is included only when VGA_MEMORY is defined in the code.
+*/
+module vga_demo(CLOCK_50, SW, KEY, LEDR, PS2_CLK, PS2_DAT, HEX5, HEX4, HEX3, HEX2, HEX1, HEX0, 
+                VGA_R, VGA_B, VGA_G,  VGA_HS, VGA_VS, VGA_BLANK_N, VGA_SYNC_N, VGA_CLK);
+	
+    // default resolution. Specify a resolution in top.v
+    parameter RESOLUTION = "160x120"; // "640x480" "320x240" "160x120"
+
+    // default color depth. Specify a color in top.v
+    parameter COLOR_DEPTH = 9; // 9 6 3
+
+    // specify the number of bits needed for an X (column) pixel coordinate on the VGA display
+    parameter nX = (RESOLUTION == "640x480") ? 10 : ((RESOLUTION == "320x240") ? 9 : 8);
+    // specify the number of bits needed for a Y (row) pixel coordinate on the VGA display
+    parameter nY = (RESOLUTION == "640x480") ? 9 : ((RESOLUTION == "320x240") ? 8 : 7);
+
+    // state names for the FSM that controls drawing of objects (LETTER KEYS ONLY)
+    parameter Q_state = 5'b00000, W_state = 5'b00001, E_state = 5'b00010, R_state = 5'b00011, T_state = 5'b00100, Y_state = 5'b00101, U_state = 5'b00110, I_state = 5'b00111, O_state = 5'b01000, 
+					A_state = 5'b01001, S_state = 5'b01010, D_state = 5'b01011, F_state = 5'b01100, G_state = 5'b01101, H_state = 5'b01110, J_state = 5'b01111, K_state = 5'b10000, L_state = 5'b10001, 
+              Z_state = 5'b10010, X_state = 5'b10011, C_state = 5'b10100, V_state = 5'b10101, B_state = 5'b10111, N_state = 5'b11000, M_state = 5'b11001, COMMA_state = 5'b11010, PERIOD_state = 5'b11011, 
+				  idle = 5'b11100, choose_state = 5'b11101;
+				  				
+	// state names for FSM that controls drawing of objects (NUMBER KEYS / STRUMPLATE)
+	parameter idle_strum = 4'd0, ONE_state = 4'd1, TWO_state = 4'd2, THREE_state = 4'd3, FOUR_state = 4'd4, FIVE_state = 4'd5, SIX_state = 4'd6,
+					SEVEN_state = 4'd7, EIGHT_state = 4'd8, NINE_state = 4'd9, ZERO_state = 4'd10, HYPHEN_state = 4'd11, EQUAL_state = 4'd12, choose_strum = 4'd13;
+	
+	// scancode parameters for keys, detected from SERIAL input
+	parameter q = 8'h15, w = 8'h1d, e = 8'h24, r = 8'h2d, t = 8'h2c, y = 8'h35, u = 8'h3c, i = 8'h43, o = 8'h44, 
+					a = 8'h1c, s = 8'h1b, d = 8'h23, f = 8'h2b, g = 8'h34, h = 8'h33, j = 8'h3b, k = 8'h42, l = 8'h4b,
+					z = 8'h1a, x = 8'h22, c = 8'h21, v = 8'h2a, b = 8'h32, n = 8'h31, m = 8'h3a, comma = 8'h41, period = 8'h49,
+					one = 8'h16, two = 8'h1e, three = 8'h26, four = 8'h25, five = 8'h2e, six = 8'h36, seven = 8'h3d, eight = 8'h3e, nine = 8'h46, zero = 8'h45,
+					hyphen = 8'h4e, equal = 8'h55;
+	
+	// general port declarations
+	input wire CLOCK_50;	
+	input wire [9:0] SW;
+	input wire [3:0] KEY;
+	output wire [9:0] LEDR;     
+    inout wire PS2_CLK;         // PS2 Clock
+    inout wire PS2_DAT;         // PS2 Data
+    output wire [6:0] HEX5, HEX4, HEX3, HEX2, HEX1, HEX0;    // used to show PS2 data
+	 
+	 //VGA port declarations (for VGA_adapter)
+	 output [7:0] VGA_R;
+    output [7:0] VGA_G;
+    output [7:0] VGA_B;
+    output VGA_HS;
+    output VGA_VS;
+    output VGA_BLANK_N;
+    output VGA_SYNC_N;
+    output VGA_CLK; 
+	 
+	 //FSM state controls for LETTER / CHORD keys
+	 reg [4:0] current_state, next_state;
+	 //FSM state controls for NUMBER / STRUMPLATE keys
+	 reg [3:0] current_state_strum, next_state_strum;
+	 
+	 //FSM signal outputs - tells VGA display when to indicate button is pushed and line out what chord to play
+	 wire q_signal, w_signal, e_signal, r_signal, t_signal, y_signal, u_signal, i_signal, o_signal, 
+			a_signal, s_signal, d_signal, f_signal, g_signal, h_signal, j_signal, k_signal, l_signal,
+			z_signal, x_signal, c_signal, v_signal, b_signal, n_signal, m_signal, comma_signal, period_signal;
+	
+	
+	// The four signals below are used in demos that actively draw pixels on top of the 
+    // background MIF. In this example, only the background is drawn, so these signals are 
+    // just used as placeholders in this very simple example.
+	reg [8:0] color;     
+    reg [nX-1:0] x_BG;         
+    reg [nY-1:0] y_BG;       
+    reg write;              
+
+	
+    // wire VGA_SYNC;      // used to indicate when background drawing is done
+	
+    // The signals below are used to multiplex the pixels displayed for objects 1 and 2
+	// wire [nX-1:0] O1_x, O2_x, MUX_x;    // x coordinate multiplexer
+	// wire [nY-1:0] O1_y, O2_y, MUX_y;    // y coordinate multiplexer
+	// wire [COLOR_DEPTH-1:0] O1_color, O2_color, MUX_color; // color multiplexer
+	// wire O1_write, O2_write, MUX_write; // write control multiplexer
+
+    reg prev_ps2_clk;               // ps2_clk value in the previous clock cycle
+    wire negedge_ps2_clk;           // used for PS2 keyboard signals
+    wire ps2_rec;                   // set when a PS2 packet has been received
+    // wire object_sel;                // used to select which object to erase/draw
+    reg [32:0] Serial;              // each PS2 serial data packet has 11 bits:
+                                    // STOP (1) PARITY d7 d6 d5 d4 d3 d2 d1 d0 START (0)
+                                    // 33 total bits are received (scancode/release/scancode
+    reg [3:0] Packet;               // used to know when 11 bits have been received
+    wire [7:0] scancode;            // used to save the current ps2 scancode
+    wire Esc;                        // enable scancode register
+    reg step;                       // move an object
+    // wire O1_done, O2_done, done;    // object move completed
+    // reg O1_O2;                      // draw object 1 when cleared, object 2 when set
+    // wire [1:0] O1_dir, O2_dir;      // used to set direction of moving for objects
+    // reg [1:0] y_Q, Y_D;             // FSM, used to control drawing of objects
+
+    wire Resetn, KEY1, KEY2;        // Reset, and synchronized versions of KEYs
+    wire PS2_CLK_S, PS2_DAT_S;      // synchronized versions of PS2 signals
+
+    assign Resetn = KEY[0];
+    sync S1 (~KEY[1], Resetn, CLOCK_50, KEY1);
+    sync S2 (~KEY[2], Resetn, CLOCK_50, KEY2);
+
+    sync S3 (PS2_CLK, Resetn, CLOCK_50, PS2_CLK_S);
+    sync S4 (PS2_DAT, Resetn, CLOCK_50, PS2_DAT_S);
+
+    always @(posedge CLOCK_50)  // record PS2 clock value in previous CLOCK_50 cycle
+        prev_ps2_clk <= PS2_CLK_S;
+
+    // check when PS2_CLK has changed from 1 to 0
+    assign negedge_ps2_clk = (prev_ps2_clk & !PS2_CLK_S);
+
+    // save PS2 data packet
+    always @(posedge CLOCK_50) begin    // specify a 33-bit shift register
+        if (Resetn == 0)
+            Serial <= 33'b0;
+        else if (negedge_ps2_clk) begin
+            Serial[31:0] <= Serial[32:1];
+            Serial[32] <= PS2_DAT_S;
+        end
+    end
+        
+    // 'count' ps2 data bits
+    always @(posedge CLOCK_50) begin
+        if (!Resetn || Packet == 'd11)
+            Packet <= 'b0;
+        else if (negedge_ps2_clk) begin
+            Packet <= Packet + 'b1;
+        end
+    end
+        
+    // used to start an object move. Key press makes scancode/release/scancode, so we check
+    // for Serial[30:23] == Serial[8:1]. Key repeat makes scancode/scancode/...
+    assign ps2_rec = (Packet == 'd11) && (Serial[30:23] == Serial[8:1]);
+	 
+	 //only enable the register for scancode if packet received contains one of the letters
+	 assign Esc = ps2_rec & (Serial[8:1] == q | Serial[8:1] == w | Serial[8:1] == e | Serial[8:1] == r | Serial[8:1] == t | Serial[8:1] == y |
+									Serial[8:1] == u | Serial[8:1] == i | Serial[8:1] == o | Serial[8:1] == a | Serial[8:1] == s | Serial[8:1] == d |
+									Serial[8:1] == f | Serial[8:1] == g | Serial[8:1] == h | Serial[8:1] == j | Serial[8:1] == k | Serial[8:1] == l |
+									Serial[8:1] == z | Serial[8:1] == x | Serial[8:1] == c | Serial[8:1] == v | Serial[8:1] == b | Serial[8:1] == n |
+									Serial[8:1] == m | Serial[8:1] == comma | Serial[8:1] == period);
+
+    // ps2 scancode is in Serial[8:1]
+    regn USC (Serial[8:1], Resetn, Esc, CLOCK_50, scancode);
+	 
+	 
+	 
+	 // FSM state table to choose states, specifically for the letter (chord) keys. Idle state is default; no audio is playing.
+	 // choose_state is to decide which "state" (i.e. which chord to play) based on scancode input (defined by parameters above).
+	 // every other state corresponds to one singular letter key. FSM stays in that state indefinitely until one of two cases are reached:
+	 // 1) reset occurs or 2) another scancode from one of the letter keys is detected. therefore input of number keys and other non-used
+	 // keys should not affect the state of the FSM
+	 always @ (*) begin
+		case (current_state) 
+			idle: if (!ps2_rec || !Resetn) next_state = idle;
+					else next_state = choose_state;
+			choose_state:
+					if (!Resetn) next_state = idle;
+					else if (scancode == q) next_state = Q_state;
+					else if (scancode == w) next_state = W_state;
+					else if (scancode == e) next_state = E_state;
+					else if (scancode == r) next_state = R_state;
+					else if (scancode == t) next_state = T_state;
+					else if (scancode == y) next_state = Y_state;
+					else if (scancode == u) next_state = U_state;
+					else if (scancode == i) next_state = I_state;
+					else if (scancode == o) next_state = O_state;
+					else if (scancode == a) next_state = A_state;
+					else if (scancode == s) next_state = S_state;
+					else if (scancode == d) next_state = D_state;
+					else if (scancode == f) next_state = F_state;
+					else if (scancode == g) next_state = G_state;
+					else if (scancode == h) next_state = H_state;
+					else if (scancode == j) next_state = J_state;
+					else if (scancode == k) next_state = K_state;
+					else if (scancode == l) next_state = L_state;
+					else if (scancode == z) next_state = Z_state;
+					else if (scancode == x) next_state = X_state;
+					else if (scancode == c) next_state = C_state;
+					else if (scancode == v) next_state = V_state;
+					else if (scancode == b) next_state = B_state;
+					else if (scancode == n) next_state = N_state;
+					else if (scancode == m) next_state = M_state;
+					else if (scancode == comma) next_state = COMMA_state;
+					else if (scancode == period) next_state = PERIOD_state;
+					else next_state = idle;
+				Q_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = Q_state;
+							else next_state = choose_state;
+				W_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != q & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = W_state;
+							else next_state = choose_state;
+				E_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != q & scancode != w & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = E_state;
+							else next_state = choose_state;
+				R_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != q & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = R_state;
+							else next_state = choose_state;
+				T_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != q & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = T_state;
+							else next_state = choose_state;
+				Y_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != q
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = Y_state;
+							else next_state = choose_state;
+				U_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != q & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = U_state;
+							else next_state = choose_state;
+				I_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != q & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = I_state;
+							else next_state = choose_state;
+				O_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != q & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = O_state;
+							else next_state = choose_state;
+				A_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != q & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = A_state;
+							else next_state = choose_state;
+				S_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != q & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = S_state;
+							else next_state = choose_state;
+				D_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != q & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = D_state;
+							else next_state = choose_state;
+				F_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != q
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = F_state;
+							else next_state = choose_state;
+				G_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != q & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = G_state;
+							else next_state = choose_state;
+				H_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != q & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = H_state;
+							else next_state = choose_state;
+				J_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != q & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = J_state;
+							else next_state = choose_state;
+				K_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != q & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = K_state;
+							else next_state = choose_state;
+				L_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != q & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = L_state;
+							else next_state = choose_state;
+				Z_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != q & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = Z_state;
+							else next_state = choose_state;
+				X_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != q
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = X_state;
+							else next_state = choose_state;
+				C_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != q & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = C_state;
+							else next_state = choose_state;
+				V_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != q & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = V_state;
+							else next_state = choose_state;
+				B_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != q & scancode != n & scancode != m & scancode != comma & scancode != period) next_state = B_state;
+							else next_state = choose_state;
+				N_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != q & scancode != m & scancode != comma & scancode != period) next_state = N_state;
+							else next_state = choose_state;
+				M_state: if (!Resetn) next_state = idle;
+							else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+								& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+								& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+								& scancode != c & scancode != v & scancode != b & scancode != n & scancode != q & scancode != comma & scancode != period) next_state = M_state;
+							else next_state = choose_state;
+				COMMA_state: if (!Resetn) next_state = idle;
+									else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+											& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+											& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+											& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != q & scancode != period) next_state = COMMA_state;
+									else next_state = choose_state;
+				PERIOD_state: if (!Resetn) next_state = idle;
+									else if (ps2_rec & scancode != w & scancode != e & scancode != r & scancode != t & scancode != y
+											& scancode != u & scancode != i & scancode != o & scancode != a & scancode != s & scancode != d & scancode != f
+											& scancode != g & scancode != h & scancode != j & scancode != k & scancode != l & scancode != z & scancode != x
+											& scancode != c & scancode != v & scancode != b & scancode != n & scancode != m & scancode != comma & scancode != q) next_state = PERIOD_state;
+									else next_state = choose_state;
+				default: next_state = current_state;
+		endcase
+	end
+
+		//FSM flip flops
+		always @ (posedge CLOCK_50) begin
+			if (!Resetn)
+				current_state <= idle;
+			else 
+				current_state <= next_state;
+		end
+		
+		//Right here after the FSM, we can assign output values that will control the waveform/audio output of line out. Not sure how that will work right now but 
+		//I'm assuming it will need some sort of signal to tell it to turn on/off. So depending on what state we're in, we play a different audio file. 
+		assign q_signal = (current_state == Q_state);
+		assign w_signal = (current_state == W_state);
+		assign e_signal = (current_state == E_state);
+		assign r_signal = (current_state == R_state);
+		assign t_signal = (current_state == T_state);
+		assign y_signal = (current_state == Y_state);
+		assign u_signal = (current_state == U_state);
+		assign i_signal = (current_state == I_state);
+		assign o_signal = (current_state == O_state);
+		assign a_signal = (current_state == A_state);
+		assign s_signal = (current_state == S_state);
+		assign d_signal = (current_state == D_state);
+		assign f_signal = (current_state == F_state);
+		assign g_signal = (current_state == G_state);
+		assign h_signal = (current_state == H_state);
+		assign j_signal = (current_state == J_state);
+		assign k_signal = (current_state == K_state);
+		assign l_signal = (current_state == L_state);
+		assign z_signal = (current_state == Z_state);
+		assign x_signal = (current_state == X_state);
+		assign c_signal = (current_state == C_state);
+		assign v_signal = (current_state == V_state);
+		assign b_signal = (current_state == B_state);
+		assign n_signal = (current_state == N_state);
+		assign m_signal = (current_state == M_state);
+		assign comma_signal = (current_state == COMMA_state);
+		assign period_signal = (current_state == PERIOD_state);
+		
+		
+		
+		//FSM STATE TESTING AND DEBUGGIN USING LEDS (IGNORE - NOT ACTUAL CODE FOR US)
+		assign LEDR[0] = q_signal;
+		assign LEDR[1] = e_signal;
+		assign LEDR[2] = t_signal;
+		assign LEDR[4] = a_signal;
+		assign LEDR[5] = d_signal;
+		assign LEDR[6] = g_signal;
+		assign LEDR[7] = comma_signal;
+		assign LEDR[8] = period_signal;
+		assign LEDR[9] = (current_state == idle);
+		
+		//We will need another FSM for numbers but we can figure that out later. 
+				
+				
+    
+	 // select object according to which PS2 key was pressed. 
+    // scancode[4] == 1 for a/s/w/z and 0 for d/f/r/c
+    // assign object_sel = scancode[4];
+    // register whether to move object 1 or object 2
+    // always @(posedge CLOCK_50)
+    //     if (!Resetn | KEY1)
+    //         O1_O2 <= 1'b0;  // select object 1
+    //     else if (KEY2)
+    //         O1_O2 <= 1'b1;  // select object 2
+    //     else if (step)
+    //         O1_O2 <= !object_sel;
+
+
+    // ********* CHANGE BELOW FOR OMNICHORD. ************ //
+
+    // assign O1_dir = scancode[1:0]; // ps2 key identifier (for a, s, w, z)
+    // assign O2_dir = {scancode[3],scancode[1]}; // ps2 key identifier (for d, f, r, c)
+    // // FSM state table
+    // always @ (*)
+    //     case (y_Q)
+    //         A:  if (!ps2_rec) Y_D = A;
+    //             else Y_D = B;
+    //         B:  Y_D = C;        // enable scancode register
+    //         C:  Y_D = D;        // send step signal to object
+    //         D:  if (done == 1'b0) Y_D = D;
+    //             else Y_D = A;
+    //         default: Y_D = A;
+    //     endcase
+    // // FSM outputs
+    // always @ (*)
+    // begin
+    //     // default assignments
+    //     Esc = 1'b0; step = 1'b0;
+    //     case (y_Q)
+    //         A:  ;
+    //         B:  Esc = 1'b1;
+    //         C:  step = 1'b1;  
+    //         D:  ;
+    //     endcase
+    // end
+
+    // // FSM state FFs
+    // always @(posedge CLOCK_50)
+    //     if (!Resetn)
+    //         y_Q <= A;
+    //     else
+    //         y_Q <= Y_D;
+    
+    // ******** CHANGE ABOVE FOR OMNICHORD. ************ //
+
+    // instantiate object 1
+    // object O1 (Resetn, CLOCK_50, KEY1, object_sel & step, O1_dir, O1_x, O1_y, 
+    //            O1_color, O1_write, O1_done);
+    //     defparam O1.RESOLUTION = RESOLUTION;
+    //     defparam O1.LEFT  = 2'b00;  // 'a'
+    //     defparam O1.RIGHT = 2'b11;  // 's'
+    //     defparam O1.UP    = 2'b01;  // 'w'
+    //     defparam O1.DOWN =  2'b10;  // 'z'
+    //     defparam O1.nX = nX;
+    //     defparam O1.nY = nY;
+    //     defparam O1.COLOR_DEPTH = COLOR_DEPTH;
+
+    // instantiate object 2
+    // object O2 (Resetn, CLOCK_50, KEY2, !object_sel & step, O2_dir, O2_x, O2_y,
+    //            O2_color, O2_write, O2_done);
+    //     defparam O2.RESOLUTION = RESOLUTION;
+    //     defparam O2.nX = nX;
+    //     defparam O2.nY = nY;
+    //     defparam O2.COLOR_DEPTH = COLOR_DEPTH;
+    //     defparam O2.XOFFSET = (RESOLUTION == "640x480") ? 160 : 
+    //                             ((RESOLUTION == "320x240") ? 80 : 40);
+    //     defparam O2.YOFFSET = (RESOLUTION == "640x480") ? 150 : 
+    //                             ((RESOLUTION == "320x240") ? 75 : 37);
+    //     defparam O2.LEFT  = 2'b01;  // 'd'
+    //     defparam O2.RIGHT = 2'b11;  // 'f'
+    //     defparam O2.UP    = 2'b10;  // 'r'
+    //     defparam O2.DOWN =  2'b00;  // 'c'
+    //     defparam O2.INIT_FILE = 
+    //         (COLOR_DEPTH == 9) ? "./MIF/circle_16_16_9.mif" : 
+    //             ((COLOR_DEPTH == 6) ?  "./MIF/circle_16_16_6.mif" : "./MIF/circle_16_16_3.mif");
+
+    // assign done = O1_done | O2_done;
+
+    // choose x, y, color, and write for one of the two objects
+    // assign MUX_x = !O1_O2 ? O1_x : O2_x;
+    // assign MUX_y = !O1_O2 ? O1_y : O2_y;
+    // assign MUX_color = !O1_O2 ? O1_color : O2_color;
+    // assign MUX_write = !O1_O2 ? O1_write : O2_write;
+	 
+	 // instantiate the VGA adapter - print bg image (omnichord base)
+    vga_adapter VGA (
+        .resetn(KEY[0]),
+        .clock(CLOCK_50),
+        .color(color),
+        .x(x_BG),
+        .y(y_BG),
+        .write(write),
+        .VGA_R(VGA_R),
+        .VGA_G(VGA_G),
+        .VGA_B(VGA_B),
+        .VGA_HS(VGA_HS),
+        .VGA_VS(VGA_VS),
+        .VGA_BLANK_N(VGA_BLANK_N),
+        .VGA_SYNC_N(VGA_SYNC_N),
+        .VGA_CLK(VGA_CLK));
+		defparam VGA.BACKGROUND_IMAGE = "./MIF/bmp_640_9.mif" ;
+		//defparam VGA.RESOLUTION = "160x120";
+		
+	//draw a key
+	//this continuously draws everything on the screen
+	always @ (posedge CLOCK_50) begin
+		if (x_BG==159 | !Resetn) begin
+			x_BG<= 0;
+			y_BG<= (y_BG==119 | !Resetn) ? 0 : y_BG+1'b1;
+		end
+		else
+			x_BG<=x_BG + 1'b1;
+	end
+	
+	always @ (posedge CLOCK_50) begin
+		color = 9'b111111111;
+		write = 0;
+		case (y_BG)
+			20: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			21: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			22: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			23: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			24: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			25: if (x_BG > 20 & x_BG < 30) begin
+						write = 1;
+						color = (q_signal) ? 9'b111000000 : 9'b000111000;
+					end
+					else begin color = 9'b111111111; write = 0; end
+			default: begin color = 9'b111111111; write = 0; end
+		endcase
+	end
+	
+
+
+    // display PS2 data
+    hex7seg H0 (Serial[4:1], HEX0);
+    hex7seg H1 (Serial[8:5], HEX1);
+    hex7seg H2 (Serial[15:12], HEX2);
+    hex7seg H3 (Serial[19:16], HEX3);
+    hex7seg H4 (scancode[3:0], HEX4);
+    hex7seg H5 (scancode[7:4], HEX5);
+
+    // instantiate the DESim VGA adapter. It first draws the background image that is stored
+    // in the video memory (the video memory is optional), and then draws pixels for the
+    // selected object whenever MUX_write is asserted.
+    // `define VGA_MEMORY
+    // vga_adapter VGA (
+    //     .resetn(Resetn),
+    //     .clock(CLOCK_50),
+    //     .color(MUX_color),      // used to draw pixels on top of background
+    //     .x(MUX_x),              // used to draw pixels on top of background
+    //     .y(MUX_y),              // used to draw pixels on top of background
+    //     .write(MUX_write),      // used to draw pixels on top of background
+    //     .VGA_X(VGA_X),          // the output VGA x coordinate (column)
+    //     .VGA_Y(VGA_Y),          // the output VGA y coordinate (row)
+    //     .VGA_COLOR(VGA_COLOR),  // the output VGA color
+    //     .VGA_SYNC(VGA_SYNC),    // indicates when background MIF has been drawn
+    //     .plot(plot));           // the output VGA plot signal
+	// 	defparam VGA.RESOLUTION = RESOLUTION;
+    //     // choose background image according to resolution and color depth
+	// 	defparam VGA.BACKGROUND_IMAGE = 
+    //         (RESOLUTION == "640x480") ?
+    //             ((COLOR_DEPTH == 9) ? "./MIF/rainbow_640_9.mif" :
+    //             ((COLOR_DEPTH == 6) ? "./MIF/rainbow_640_6.mif" :
+    //             "./MIF/rainbow_640_3.mif")) : 
+    //         ((RESOLUTION == "320x240") ?
+    //             ((COLOR_DEPTH == 9) ? "./MIF/rainbow_320_9.mif" :
+    //             ((COLOR_DEPTH == 6) ? "./MIF/rainbow_320_6.mif" :
+    //             "./MIF/rainbow_320_3.mif")) : 
+    //                 // 160x120
+    //                 ((COLOR_DEPTH == 9) ? "./MIF/rainbow_160_9.mif" :
+    //                 ((COLOR_DEPTH == 6) ? "./MIF/rainbow_160_6.mif" :
+    //                 "./MIF/rainbow_160_3.mif")));
+	// 	defparam VGA.COLOR_DEPTH = COLOR_DEPTH;
+
+    // assign LEDR = {VGA_SYNC,1'b0,scancode}; // turn on LED 9 when background is done, show scancode
+
+endmodule
+
+// syncronizer, implemented as two FFs in series
+module sync(D, Resetn, Clock, Q);
+    input wire D;
+    input wire Resetn, Clock;
+    output reg Q;
+
+    reg Qi; // internal node
+
+    always @(posedge Clock)
+        if (Resetn == 0) begin
+            Qi <= 1'b0;
+            Q <= 1'b0;
+        end
+        else begin
+            Qi <= D;
+            Q <= Qi;
+        end
+endmodule
+
+// n-bit register with enable
+module regn(R, Resetn, E, Clock, Q);
+    parameter n = 8;
+    input wire [n-1:0] R;
+    input wire Resetn, E, Clock;
+    output reg [n-1:0] Q;
+
+    always @(posedge Clock)
+        if (!Resetn)
+            Q <= 0;
+        else if (E)
+            Q <= R;
+endmodule
+
+// n-bit up/down-counter with reset, load, enable, and direction control
+module upDn_count (R, Clock, Resetn, L, E, Dir, Q);
+    parameter n = 8;
+    input wire [n-1:0] R;
+    input wire Clock, Resetn, E, L, Dir;
+    output reg [n-1:0] Q;
+
+    always @ (posedge Clock)
+        if (Resetn == 0)
+            Q <= {n{1'b0}};
+        else if (L == 1)
+            Q <= R;
+        else if (E)
+            if (Dir)
+                Q <= Q + {{n-1{1'b0}},1'b1};
+            else
+                Q <= Q - {{n-1{1'b0}},1'b1};
+endmodule
+
+module hex7seg (hex, display);
+    input wire [3:0] hex;
+    output reg [6:0] display;
+
+    /*
+     *       0  
+     *      ---  
+     *     |   |
+     *    5|   |1
+     *     | 6 |
+     *      ---  
+     *     |   |
+     *    4|   |2
+     *     |   |
+     *      ---  
+     *       3  
+     */
+    always @ (hex)
+        case (hex)
+            4'h0: display = 7'b1000000;
+            4'h1: display = 7'b1111001;
+            4'h2: display = 7'b0100100;
+            4'h3: display = 7'b0110000;
+            4'h4: display = 7'b0011001;
+            4'h5: display = 7'b0010010;
+            4'h6: display = 7'b0000010;
+            4'h7: display = 7'b1111000;
+            4'h8: display = 7'b0000000;
+            4'h9: display = 7'b0011000;
+            4'hA: display = 7'b0001000;
+            4'hB: display = 7'b0000011;
+            4'hC: display = 7'b1000110;
+            4'hD: display = 7'b0100001;
+            4'hE: display = 7'b0000110;
+            4'hF: display = 7'b0001110;
+        endcase
+endmodule
+
+// implements a movable object
+// module object (Resetn, Clock, go, ps2_rec, dir, VGA_x, VGA_y, VGA_color, VGA_write, done);
+//     parameter RESOLUTION = "160x120"; // "640x480" "320x240" "160x120"
+//     // specify the number of bits needed for an X (column) pixel coordinate on the VGA display
+//     parameter nX = (RESOLUTION == "640x480") ? 10 : ((RESOLUTION == "320x240") ? 9 : 8);
+//     // specify the number of bits needed for a Y (row) pixel coordinate on the VGA display
+//     parameter nY = (RESOLUTION == "640x480") ? 9 : ((RESOLUTION == "320x240") ? 8 : 7);
+//     parameter COLOR_DEPTH = 3;
+//     // by default, use offsets to center the object on the VGA display
+//     parameter XOFFSET = (RESOLUTION == "640x480") ? 320 : 
+//                                 ((RESOLUTION == "320x240") ? 160 : 80);
+//     parameter YOFFSET = (RESOLUTION == "640x480") ? 240 : 
+//                                 ((RESOLUTION == "320x240") ? 120 : 60);
+//     parameter LEFT = 2'b00 /*'a'*/, RIGHT = 2'b11/*'s'*/, UP = 2'b01/*'w'*/, DOWN = 2'b10/*'z'*/;
+//     parameter xOBJ = 4, yOBJ = 4;   // object size is 2^xOBJ x 2^yOBJ
+//     parameter BOX_SIZE_X = 1 << xOBJ;
+//     parameter BOX_SIZE_Y = 1 << yOBJ;
+//     parameter Mn = xOBJ + yOBJ; // address lines needed for the object memory
+//     parameter INIT_FILE = 
+//             (COLOR_DEPTH == 9) ? "./MIF/object_mem_16_16_9.mif" : 
+//                 ((COLOR_DEPTH == 6) ?  "./MIF/object_mem_16_16_6.mif" : 
+//                 "./MIF/object_mem_16_16_3.mif");
+
+//     // state names for the FSM that draws the object
+//     parameter A = 3'b000, B = 3'b001, C = 3'b010, D = 3'b011, E = 3'b100,
+//               F = 3'b101, G = 3'b110, H = 3'b111;
+    
+//     input wire Resetn, Clock;
+//     input wire go;                              // can be used to draw at initial position
+//     input wire ps2_rec;                         // PS2 data received
+//     input wire [1:0] dir;                       // movement direction
+// 	output wire [nX-1:0] VGA_x;                 // for syncing with object memory
+// 	output wire [nY-1:0] VGA_y;                 // for syncing with object memory
+// 	output wire [COLOR_DEPTH-1:0] VGA_color;    // used to draw pixels
+//     output wire VGA_write;                      // pixel write control
+//     output reg done;                            // done drawing cycle
+
+// 	wire [nX-1:0] X, X0;    // starting X location 
+// 	wire [nY-1:0] Y, Y0;    // starting Y location 
+// 	wire [nX-1:0] size_x = BOX_SIZE_X;   // store the X size (must be power of 2)
+// 	wire [nY-1:0] size_y = BOX_SIZE_Y;   // store the Y size
+//     wire [xOBJ-1:0] XC;                  // used to access object memory
+//     wire [yOBJ-1:0] YC;                  // used to access object memory
+//     reg write, Lxc, Lyc, Exc, Eyc;       // object control signals
+//     reg erase;                           // erase/draw object
+//     wire Right, Left, Up, Down;          // object direction
+//     reg Lx, Ly, Ex, Ey;                  // object counter controls
+//     reg [2:0] y_Q, Y_D;                  // FSM
+    
+// 	wire [COLOR_DEPTH-1:0] obj_color;    // object pixel colors, read from memory
+	
+//     // object (x,y) location. For x, counter will be enabled when moving L/R, increment
+//     // for R, decrement for L. For y, counter will be enabled when moving U/D, increment 
+//     // for D, decrement for U
+//     assign X0 = XOFFSET;
+//     assign Y0 = YOFFSET;
+//     upDn_count UX (X0, Clock, Resetn, Lx, Ex, Right, X);
+//         defparam UX.n = nX;
+//     upDn_count UY (Y0, Clock, Resetn, Ly, Ey, Down, Y);
+//         defparam UY.n = nY;
+
+//     // these counter are used to generate (x,y) coordinates to read the object's pixels
+//     upDn_count U3 ({xOBJ{1'd0}}, Clock, Resetn, Lxc, Exc, 1'b1, XC); // object column counter
+//         defparam U3.n = xOBJ;
+//     upDn_count U4 ({yOBJ{1'd0}}, Clock, Resetn, Lyc, Eyc, 1'b1, YC); // object row counter
+//         defparam U4.n = yOBJ;
+
+//     // these signals are used to enable the (x,y) object location counters and to make these 
+//     // counters increment or decrement
+//     assign Left = (dir == LEFT);
+//     assign Right = (dir == RIGHT);
+//     assign Up = (dir == UP);
+//     assign Down = (dir == DOWN);
+
+//     // FSM state table
+//     always @ (*)
+//         case (y_Q)
+//             A:  Y_D = B;                        // load (x,y) location counters
+//             B:  if (go) Y_D = F;                // pushbutton KEY pressed to show object
+//                 else if (ps2_rec) Y_D = C;      // PS2 key received to move object
+//                 else Y_D = B;                   // wait
+//             C:  if (XC != size_x-1) Y_D = C;    // erase row of object
+//                 else Y_D = D;
+//             D:  if (YC != size_y-1) Y_D = C;    // next row of object to erase
+//                 else Y_D = E;                   // done erase cycle
+//             E:  Y_D = F;                        // +/- (x,y)
+//             F:  if (XC != size_x-1) Y_D = F;    // draw row of object
+//                 else Y_D = G;
+//             G:  if (YC != size_y-1) Y_D = F;    // next row of object to draw
+//                 else Y_D = H;                   // done draw cycle
+//             H:  if (go) Y_D = H;                // wait for KEY press
+//                 else Y_D = B;
+//             default: Y_D = A;
+//         endcase
+//     // FSM outputs
+//     always @ (*)
+//     begin
+//         // default assignments
+//         Lx = 1'b0; Ly = 1'b0; Ex = 1'b0; Ey = 1'b0; write = 1'b0; 
+//         Lxc = 1'b0; Lyc = 1'b0; Exc = 1'b0; Eyc = 1'b0; erase = 1'b0; done = 1'b0;
+//         case (y_Q)
+//             A:  begin Lx = 1'b1; Ly = 1'b1; end                   // load (X,Y) counters
+//             B:  begin Lxc = 1'b1; Lyc = 1'b1; end                 // load (XC,YC) counters
+//             C:  begin Exc = 1'b1; write = 1'b1; erase = 1'b1; end // enable XC, write pixel
+//             D:  begin Lxc = 1'b1; Eyc = 1'b1; erase = 1'b1; end   // load XC, enable YC
+//             // state E is reached after erasing the object. Now, move and draw the object
+//             E:  begin Ex = Right | Left; Ey = Up | Down; end      // move L/R or U/D
+//             F:  begin Exc = 1'b1; write = 1'b1; end               // enable XC, write pixel
+//             G:  begin Lxc = 1'b1; Eyc = 1'b1; end                 // load XC, enable YC
+//             H:  done = 1'b1;
+//         endcase
+//     end
+
+//     // FSM state FFs
+//     always @(posedge Clock)
+//         if (!Resetn)
+//             y_Q <= 3'b0;
+//         else
+//             y_Q <= Y_D;
+
+//     // read a pixel color from the object memory. We can use {YC,XC} because the x dimension
+//     // of the object memory is a power of 2
+//     object_mem U6 ({YC,XC}, Clock, obj_color);
+//         defparam U6.n = COLOR_DEPTH;
+//         defparam U6.Mn = xOBJ + yOBJ;
+//         defparam U6.INIT_FILE = INIT_FILE;
+
+//     // compute the (x,y) location of the current pixel to be drawn (or erased). We subtract
+//     // half the object's width and height because we want the objec to be centered at its 
+//     // original (x,y) location. We add (Xc,YC) to form the correct address of the pixel. The
+//     // object memory takes one clock cycle to provide data, so we register the computed (x,y)
+//     // location to remain synchronized
+//     regn U7 (X - (size_x >> 1) + XC, Resetn, 1'b1, Clock, VGA_x);
+//         defparam U7.n = nX;
+//     regn U8 (Y - (size_y >> 1) + YC, Resetn, 1'b1, Clock, VGA_y);
+//         defparam U8.n = nY;
+
+//     // synchronize write signal with VGA_x, VGA_y, VGA_color 
+//     regn U9 (write, Resetn, 1'b1, Clock, VGA_write);
+//         defparam U9.n = 1;
+
+//     // use the background color (when erasing), or the object color when drawing
+//     // (black background is assumed below)
+//     assign VGA_color = erase ? {COLOR_DEPTH{1'b0}} : obj_color;
+
+// endmodule
+
